@@ -1,0 +1,123 @@
+name: CI Checks
+
+on: [push]
+
+env:
+  CMAKE_VERSION: 3.17.0
+  NINJA_VERSION: 1.9.0
+  BUILD_TYPE: Release
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  build:
+    name: ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.os }}  
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - {
+            name: "Clang-11: Ubuntu",
+            os: [self-hosted, linux],
+            artifact: "ubuntu_clang.7z",
+            build_type: "Debug",
+            cc: "clang-11",
+            cxx: "clang++-11",
+            archiver: "7z a",
+            generators: "Ninja"
+          }
+
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 2
+          submodules: recursive
+
+      - name: Print env
+        run: |
+          echo github.event.action: ${{ github.event.action }}
+          echo github.event_name: ${{ github.event_name }}
+
+      - name: Install dependencies on Ubuntu
+        if: startsWith(matrix.config.name, 'Clang-11')
+        run: |
+          echo
+          echo "###################################################################"
+          echo "######################### Install LLVM-11 #########################"
+          echo "###################################################################"
+          sudo wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
+          sudo apt-add-repository 'deb http://apt.llvm.org/focal/ llvm-toolchain-focal-11 main'
+          sudo apt-get update
+          sudo apt-get install -y binutils libstdc++6 clang-11 clang-format-11 clang-tidy-11 \
+          llvm-11-dev cmake python3 libpng-dev libbz2-dev
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-11 90
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-11 90
+          sudo update-alternatives --install /usr/bin/python python /usr/bin/python3 90
+          echo
+          echo "###################################################################"
+          echo "######################## ASGE Dependencies ########################"
+          echo "###################################################################"
+          sudo apt-get install -y --no-install-recommends --no-install-suggests \
+          libtbb-dev libharfbuzz-bin libharfbuzz-dev libxrandr-dev libxxf86vm-dev \
+          libxi-dev libxinerama-dev libxcursor-dev libgl1-mesa-dev libglu1-mesa-dev
+          echo
+          echo "###################################################################"
+          echo "######################### Install CPPCHECK ########################"
+          echo "###################################################################"
+          # sudo snap install cppcheck && sudo ln -s /snap/bin/cppcheck /usr/bin/cppcheck
+          curl -sLO http://de.archive.ubuntu.com/ubuntu/pool/universe/t/tinyxml2/libtinyxml2-8_8.0.0+dfsg-2_amd64.deb \
+          && sudo dpkg -i libtinyxml2-8_8.0.0+dfsg-2_amd64.deb
+          curl -sLO http://de.archive.ubuntu.com/ubuntu/pool/universe/c/cppcheck/cppcheck_2.1-1_amd64.deb && \
+          sudo dpkg -i cppcheck_2.1-1_amd64.deb
+          
+      - name: Download Clang-Format.py 
+        shell: bash
+        run: |
+          echo
+          echo "###################################################################"
+          echo "################### Download run_clang_format.py ##################"
+          echo "###################################################################"
+          wget https://raw.githubusercontent.com/Sarcasm/run-clang-format/master/run-clang-format.py
+          chmod +x run-clang-format.py
+
+      - name: Version Check
+        shell: bash
+        run: |
+          /usr/bin/clang-11 --version
+          /usr/bin/cppcheck --version
+          cmake --version
+
+      - name: Configure
+        shell: bash
+        run: |
+          export CC=${{ matrix.config.cc }}
+          export CXX=${{ matrix.config.cxx }}
+          cmake -H. -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -Bbuild \
+            -DCMAKE_BUILD_TYPE=${{ matrix.config.build_type }}
+
+      - name: Cppcheck
+        shell: bash
+        run: |
+          /usr/bin/cppcheck --quiet --platform=unix64 \
+            --project=build/compile_commands.json \
+            --enable=warning,style,performance,portability \
+            --template='{file}:{line}: {severity}: {id}:{message}\n{code}' \
+            --template-location='{file}:{line}: note: {info}\n{code}' \
+            --error-exitcode=1 --force --inline-suppr --suppressions-list=.cppcheck \
+            --std=c++20 --language=c++ -i_deps -iCMakeFiles -ibuild
+
+      - name: Clang-Format
+        if: ${{ always() }}
+        shell: bash
+        run: ./run-clang-format.py --clang-format-executable /usr/bin/clang-format-11 -r app gamelib
+
+      - name: Clang-Tidy
+        if: ${{ always() }}
+        shell: bash
+        run: cmake --build build --config ${{ matrix.config.build_type }} --target ClangTidy
+
+      - name: Build
+        if: ${{ always() }}
+        shell: bash
+        run: cmake --build build --config ${{ matrix.config.build_type }}

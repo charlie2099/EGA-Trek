@@ -1,0 +1,20 @@
+// suppress all unused functions errors in all files
+unusedFunction
+noExplicitConstructor
+unreadVariable
+unusedVariable
+
+// whilst I rate these checks, students find them obtuse
+useStlAlgorithm
+
+// suppress the annoying system include messages
+missingIncludeSystem
+
+// suppress ome obvious folders
+*:CMakeFiles
+*:*_deps/*
+*:*extern/*
+*:libs/*
+
+
+
